@@ -3,24 +3,44 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io/ioutil"
 	"log"
 	"os"
 	"strings"
 )
 
+var rewrite bool
+var infile string
+
+func usage() {
+	fmt.Fprintf(os.Stderr, "usage: %s [flags] PATH\n", os.Args[0])
+	flag.PrintDefaults()
+}
+
 func main() {
+	flag.Usage = usage
+	flag.BoolVar(&rewrite, "w", false, "write result to (source) file instead of stdout")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		flag.Usage()
+		return
+	}
+
+	fileName := flag.Arg(0)
+
 	fset := token.NewFileSet()
 
 	// Load this file, including comments
-	f, err := parser.ParseFile(fset, os.Args[1], nil, parser.ParseComments)
+	f, err := parser.ParseFile(fset, fileName, nil, parser.ParseComments)
 	if err != nil {
-		fmt.Println(err)
-		return
+		log.Fatal(err)
 	}
 
 	ast.Walk(&walker{fset: fset}, f)
@@ -30,7 +50,28 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("%s", buf.String())
+	if rewrite {
+		tmpfile, err := ioutil.TempFile("", fileName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer os.Remove(tmpfile.Name()) // Clean up in case of error
+
+		// Write to tempfile
+		if _, err = buf.WriteTo(tmpfile); err != nil {
+			log.Fatal(err)
+		}
+		if err = tmpfile.Close(); err != nil {
+			log.Fatal(err)
+		}
+
+		// Move tempfile over top of previous file
+		if err = os.Rename(tmpfile.Name(), fileName); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		fmt.Printf("%s", buf.String())
+	}
 }
 
 type walker struct {
